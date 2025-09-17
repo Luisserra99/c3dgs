@@ -2,6 +2,16 @@
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
   "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
 <svg xmlns:xlink="http://www.w3.org/1999/xlink" width="1080pt" height="360pt" viewBox="0 0 1080 360" xmlns="http://www.w3.org/2000/svg" version="1.1">
+
+<style
+id="style1">
+    g {
+        text: black;
+    }
+    @media (prefers-color-scheme: dark) {
+        g { fill: white; }
+    }
+</style>
  <metadata>
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
@@ -17,17 +27,9 @@
   </rdf:RDF>
  </metadata>
  <defs>
-  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
  </defs>
  <g id="figure_1">
-  <g id="patch_1">
-   <path d="M 0 360 
-L 1080 360 
-L 1080 0 
-L 0 0 
-z
-" style="fill: #ffffff"/>
-  </g>
+
   <g id="axes_1">
    <g id="patch_2">
     <path d="M 12.96 322.64 
@@ -41,7 +43,7 @@ z
    <g id="matplotlib.axis_1">
     <g id="text_1">
      <!-- PSNR -->
-     <g style="fill: #262626" transform="translate(118.41375 344.7975)scale(0.16 -0.16)">
+     <g  transform="translate(118.41375 344.7975)scale(0.16 -0.16)">
       <defs>
        <path id="DejaVuSans-50" d="M 1259 4147 
 L 1259 2394 
@@ -151,7 +153,7 @@ L 139.86 322.64
 L 139.86 39.859048 
 L 24.496364 39.859048 
 z
-" clip-path="url(#p9a5c6fad6e)" style="fill: #4c72b0; stroke: #ffffff; stroke-linejoin: miter"/>
+" clip-path="url(#p9a5c6fad6e)" style="fill: #4c72b0;  stroke-linejoin: miter"/>
    </g>
    <g id="patch_4">
     <path d="M 139.86 322.64 
@@ -159,27 +161,27 @@ L 255.223636 322.64
 L 255.223636 40.071825 
 L 139.86 40.071825 
 z
-" clip-path="url(#p9a5c6fad6e)" style="fill: #dd8452; stroke: #ffffff; stroke-linejoin: miter"/>
+" clip-path="url(#p9a5c6fad6e)" style="fill: #dd8452;  stroke-linejoin: miter"/>
    </g>
    <g id="patch_5">
     <path d="M 12.96 322.64 
 L 12.96 25.72 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_6">
     <path d="M 266.76 322.64 
 L 266.76 25.72 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_7">
     <path d="M 12.96 322.64 
 L 266.76 322.64 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_8">
     <path d="M 12.96 25.72 
 L 266.76 25.72 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="text_2">
     <!-- 26.58 -->
@@ -529,7 +531,7 @@ z
    <g id="matplotlib.axis_3">
     <g id="text_6">
      <!-- SSIM -->
-     <g style="fill: #262626" transform="translate(387.2 344.7975)scale(0.16 -0.16)">
+     <g  transform="translate(387.2 344.7975)scale(0.16 -0.16)">
       <defs>
        <path id="DejaVuSans-49" d="M 628 4666 
 L 1259 4666 
@@ -569,7 +571,7 @@ L 406.62 322.64
 L 406.62 39.859048 
 L 291.256364 39.859048 
 z
-" clip-path="url(#p159079bf38)" style="fill: #4c72b0; stroke: #ffffff; stroke-linejoin: miter"/>
+" clip-path="url(#p159079bf38)" style="fill: #4c72b0;  stroke-linejoin: miter"/>
    </g>
    <g id="patch_11">
     <path d="M 406.62 322.64 
@@ -577,27 +579,27 @@ L 521.983636 322.64
 L 521.983636 42.842668 
 L 406.62 42.842668 
 z
-" clip-path="url(#p159079bf38)" style="fill: #dd8452; stroke: #ffffff; stroke-linejoin: miter"/>
+" clip-path="url(#p159079bf38)" style="fill: #dd8452;  stroke-linejoin: miter"/>
    </g>
    <g id="patch_12">
     <path d="M 279.72 322.64 
 L 279.72 25.72 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_13">
     <path d="M 533.52 322.64 
 L 533.52 25.72 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_14">
     <path d="M 279.72 322.64 
 L 533.52 322.64 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_15">
     <path d="M 279.72 25.72 
 L 533.52 25.72 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="text_7">
     <!-- 0.853 -->
@@ -727,7 +729,7 @@ z
    <g id="matplotlib.axis_5">
     <g id="text_11">
      <!-- Size (MB) -->
-     <g style="fill: #262626" transform="translate(635.78125 344.7975)scale(0.16 -0.16)">
+     <g  transform="translate(635.78125 344.7975)scale(0.16 -0.16)">
       <defs>
        <path id="DejaVuSans-69" d="M 603 3500 
 L 1178 3500 
@@ -859,7 +861,7 @@ L 673.38 322.64
 L 673.38 39.859048 
 L 558.016364 39.859048 
 z
-" clip-path="url(#p79794ea8a6)" style="fill: #4c72b0; stroke: #ffffff; stroke-linejoin: miter"/>
+" clip-path="url(#p79794ea8a6)" style="fill: #4c72b0;  stroke-linejoin: miter"/>
    </g>
    <g id="patch_18">
     <path d="M 673.38 322.64 
@@ -867,7 +869,7 @@ L 788.743636 322.64
 L 788.743636 312.160089 
 L 673.38 312.160089 
 z
-" clip-path="url(#p79794ea8a6)" style="fill: #dd8452; stroke: #ffffff; stroke-linejoin: miter"/>
+" clip-path="url(#p79794ea8a6)" style="fill: #dd8452;  stroke-linejoin: miter"/>
    </g>
    <g id="patch_19">
     <path d="M 731.061818 41.993658 
@@ -881,22 +883,22 @@ L 726.061818 247.982196
    <g id="patch_20">
     <path d="M 546.48 322.64 
 L 546.48 25.72 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_21">
     <path d="M 800.28 322.64 
 L 800.28 25.72 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_22">
     <path d="M 546.48 322.64 
 L 800.28 322.64 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_23">
     <path d="M 546.48 25.72 
 L 800.28 25.72 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="text_12">
     <!-- 640.31 -->
@@ -1004,7 +1006,7 @@ z
    <g id="matplotlib.axis_7">
     <g id="text_17">
      <!-- FPS -->
-     <g style="fill: #262626" transform="translate(925.63625 344.7975)scale(0.16 -0.16)">
+     <g  transform="translate(925.63625 344.7975)scale(0.16 -0.16)">
       <defs>
        <path id="DejaVuSans-46" d="M 628 4666 
 L 3309 4666 
@@ -1033,7 +1035,7 @@ L 940.14 322.64
 L 940.14 240.712808 
 L 824.776364 240.712808 
 z
-" clip-path="url(#pcd2b71fb03)" style="fill: #4c72b0; stroke: #ffffff; stroke-linejoin: miter"/>
+" clip-path="url(#pcd2b71fb03)" style="fill: #4c72b0;  stroke-linejoin: miter"/>
    </g>
    <g id="patch_26">
     <path d="M 940.14 322.64 
@@ -1041,7 +1043,7 @@ L 1055.503636 322.64
 L 1055.503636 39.859048 
 L 940.14 39.859048 
 z
-" clip-path="url(#pcd2b71fb03)" style="fill: #dd8452; stroke: #ffffff; stroke-linejoin: miter"/>
+" clip-path="url(#pcd2b71fb03)" style="fill: #dd8452;  stroke-linejoin: miter"/>
    </g>
    <g id="patch_27">
     <path d="M 882.458182 51.20252 
@@ -1055,22 +1057,22 @@ L 887.458182 56.20252
    <g id="patch_28">
     <path d="M 813.24 322.64 
 L 813.24 25.72 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_29">
     <path d="M 1067.04 322.64 
 L 1067.04 25.72 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_30">
     <path d="M 813.24 322.64 
 L 1067.04 322.64 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_31">
     <path d="M 813.24 25.72 
 L 1067.04 25.72 
-" style="fill: none; stroke: #ffffff; stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
+" style="fill: none;  stroke-width: 1.25; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="text_18">
     <!-- 93 -->
