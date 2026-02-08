@@ -7,14 +7,15 @@ channels:
   - pyg
 dependencies:
   - plyfile=0.8.1
-  - python=3.8
+  - python=3.9
   - pip=22.3.1
-  - pytorch-cuda=12.1
-  - cuda-toolkit=12.1
+  - pytorch-cuda=12.4
+  - cuda-toolkit=12.4
   - torchvision
   - pip
   - pytorch-scatter
   - tqdm
+  - ninja
   - pip:
     - submodules/diff-gaussian-rasterization
     - submodules/weighted_distance
