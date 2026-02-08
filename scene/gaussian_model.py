@@ -444,11 +444,16 @@ class GaussianModel:
         path,
         compress: bool = True,
         half_precision: bool = False,
-        sort_morton=False,
+        sort_morton: bool = False,
+
     ):
         with torch.no_grad():
             if sort_morton:
                 self._sort_morton()
+            ##############################################
+            else:
+                self._sort_hilbert()
+            ##############################################
             if isinstance(path, str):
                 mkdir_p(os.path.dirname(os.path.abspath(path)))
 
@@ -765,6 +770,120 @@ class GaussianModel:
             else:
                 self._scaling = nn.Parameter(self._scaling[order], requires_grad=True)
                 self._rotation = nn.Parameter(self._rotation[order], requires_grad=True)
+
+###################################################################################################
+    def _sort_hilbert(self):
+# Try importing the library; raise error if missing as it's required for this method
+        try:
+            from space_filling_pytorch import encode_hilbert
+        except ImportError:
+            raise ImportError("Please install the library: pip install git+https://github.com/Kitsunetic/space-filling-pytorch.git")
+
+        """
+        Sorts the internal Gaussian attributes (xyz, rotation, scaling, etc.) 
+        based on a Hilbert Curve traversal of the 3D position.
+        
+        This replaces _sort_morton() to provide better spatial locality and 
+        higher compression ratios for saved PLY/tensor files.
+        """
+        # 1. Prepare Data
+        # Assuming self._xyz is the standard attribute for positions
+        xyz = self._xyz
+        device = xyz.device
+        num_gaussians = xyz.shape[0]
+        
+        print(f"Sorting {num_gaussians} points via Hilbert Curve on {device}...")
+
+        # 2. Normalization to [-1, 1]
+        # space-filling-pytorch requires inputs in [-1, 1] range 
+        # We calculate the bounding box of the current scene
+        min_vals = xyz.min(dim=0).values
+        max_vals = xyz.max(dim=0).values
+        
+        extent = max_vals - min_vals
+        extent[extent == 0] = 1.0 # Prevent division by zero
+        
+        # Map [min, max] -> 
+        norm_data = (xyz - min_vals) / extent
+        
+        # Map  -> [-1, 1] (Required by library)
+        model_input = norm_data * 2.0 - 1.0
+        
+        # Ensure float32 (library requirement)
+        if model_input.dtype!= torch.float32:
+            model_input = model_input.float()
+
+        # 3. Hilbert Encoding
+        # The library requires a batch dimension: (B, N, 3) -> (1, N, 3)
+        model_input = model_input.unsqueeze(0)
+        
+        # space_size=4096 same as codebook
+        with torch.no_grad():
+            hilbert_codes = encode_hilbert( 
+                model_input, 
+                space_size=262144,  
+                convention='xyz'
+            )
+        
+        # Remove batch dimension
+        hilbert_codes = hilbert_codes.squeeze(0)
+
+        # 4. Compute Sort Indices
+        # torch.argsort is stable and optimized on GPU
+        sort_indices = torch.argsort(hilbert_codes.squeeze(0))
+
+        # 5. Apply Permutation to All Attributes
+        # We must reorder all attributes to maintain the scene's integrity.
+        # These attribute names align with the standard 3DGS codebase.
+        # We re-wrap in nn.Parameter to maintain model state if training continues
+        
+        # --- ALWAYS SORTED ---
+        self._xyz = nn.Parameter(self._xyz[sort_indices], requires_grad=True)
+        self._opacity = nn.Parameter(self._opacity[sort_indices], requires_grad=True)
+        
+        # Check if _scaling_factor exists before sorting (it appears in your morton sort)
+        if hasattr(self, "_scaling_factor") and self._scaling_factor is not None:
+             self._scaling_factor = nn.Parameter(self._scaling_factor[sort_indices], requires_grad=True)
+
+        # --- COLOR HANDLING ---
+        if self.is_color_indexed:
+            # If indexed, we sort the INDICES (N), not the codebook (K)
+            if hasattr(self, "_feature_indices"):
+                self._feature_indices = nn.Parameter(
+                    self._feature_indices[sort_indices], requires_grad=False
+                )
+        else:
+            # If NOT indexed, we sort the raw features (N)
+            self._features_rest = nn.Parameter(
+                self._features_rest[sort_indices], requires_grad=True
+            )
+            self._features_dc = nn.Parameter(
+                self._features_dc[sort_indices], requires_grad=True
+            )
+
+        # --- GEOMETRY HANDLING ---
+        if self.is_gaussian_indexed:
+            # If indexed, sort the INDICES (N)
+            if hasattr(self, "_gaussian_indices"):
+                self._gaussian_indices = nn.Parameter(
+                    self._gaussian_indices[sort_indices], requires_grad=False
+                )
+        else:
+            # If NOT indexed, sort the raw scaling/rotation (N)
+            self._scaling = nn.Parameter(self._scaling[sort_indices], requires_grad=True)
+            self._rotation = nn.Parameter(self._rotation[sort_indices], requires_grad=True)
+
+        # --- OPTIONAL ATTRIBUTES (Training artifacts) ---
+        # These are usually not Parameters, just buffers. We sort them if they match N.
+        for attr_name in ["xyz_gradient_accum", "denom", "max_radii2D"]:
+            if hasattr(self, attr_name):
+                attr_val = getattr(self, attr_name)
+                if attr_val is not None and attr_val.shape[0] == num_gaussians:
+                    # No need for nn.Parameter here usually, but safe to keep as tensor
+                    setattr(self, attr_name, attr_val[sort_indices.to(attr_val.device)])
+
+        print("Hilbert sorting complete.")
+    ###################################################################################################
 
     def mask_splats(self, mask: torch.Tensor):
         with torch.no_grad():
