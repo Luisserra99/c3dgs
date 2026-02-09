@@ -37,14 +37,18 @@ class VectorQuantize(nn.Module):
     def update(self, x: torch.Tensor, importance: torch.Tensor) -> torch.Tensor:
         with torch.no_grad():
             min_dists, idx = weightedDistance(x.detach(), self.codebook.detach())
+            
+            # Apply softmax to importances
+            importance_softmax = torch.nn.functional.softmax(importance, dim=0)
+            
             acc_importance = scatter(
-                importance, idx, 0, reduce="sum", dim_size=self.codebook.shape[0]
+                importance_softmax, idx, 0, reduce="sum", dim_size=self.codebook.shape[0]
             )
 
             ema_inplace(self.entry_importance, acc_importance, self.decay)
 
             codebook = scatter(
-                x * importance[:, None],
+                x * importance_softmax[:, None],
                 idx,
                 0,
                 reduce="sum",
