@@ -12,7 +12,7 @@ for var in "${vars[@]}"; do
     python compress.py \
       --model_path "/d01/luis/datasets/models/$var" \
       --data_device "cuda" \
-      --output_vq "/d01/luis/outputs_preliminares_softmax/$var/"
+      --output_vq "/d01/luis/outputs_preliminares_sensitivity/$var/"
       
     echo "Finished: $var"
     echo "-----------------------------------"
