@@ -510,14 +510,14 @@ class GaussianModel:
             else:
                 save_dict["opacity"] = self._opacity.detach().to(dtype).cpu().numpy()
 
-            # save indices
+            # save indices (store as 16-bit unsigned to reduce file size)
             if self.is_color_indexed:
                 save_dict["feature_indices"] = (
-                    self._feature_indices.detach().contiguous().cpu().int().numpy()
+                    self._feature_indices.detach().contiguous().cpu().numpy().astype(np.uint8)
                 )
             if self.is_gaussian_indexed:
                 save_dict["gaussian_indices"] = (
-                    self._gaussian_indices.detach().contiguous().cpu().int().numpy()
+                    self._gaussian_indices.detach().contiguous().cpu().numpy().astype(np.uint16)
                 )
 
             # save scaling
@@ -717,15 +717,17 @@ class GaussianModel:
             )
 
         if "gaussian_indices" in list(state_dict.keys()):
+            # saved as uint16 -> convert to int64 before creating torch tensor
             self._gaussian_indices = nn.Parameter(
-                torch.from_numpy(state_dict["gaussian_indices"]).long().to("cuda"),
+                torch.from_numpy(state_dict["gaussian_indices"].astype(np.int64)).long().to("cuda"),
                 requires_grad=False,
             )
 
         self.color_index_mode = ColorMode.NOT_INDEXED
         if "feature_indices" in list(state_dict.keys()):
+            # saved as uint16 -> convert to int64 before creating torch tensor
             self._feature_indices = nn.Parameter(
-                torch.from_numpy(state_dict["feature_indices"]).long().to("cuda"),
+                torch.from_numpy(state_dict["feature_indices"].astype(np.int64)).long().to("cuda"),
                 requires_grad=False,
             )
             self.color_index_mode = ColorMode.ALL_INDEXED
