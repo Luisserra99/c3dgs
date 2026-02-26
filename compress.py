@@ -69,16 +69,13 @@ def calc_importance(
             cov3d=cov3d_scaled,
         )["render"]
         
-        # Compute energy difference between original and rendered image
+        # Compute point‑wise difference between original and rendered images
         original_image = camera.original_image[0:3, :, :].unsqueeze(0)  # Shape: (1, 3, H, W)
         rendering_unsqueezed = rendering.unsqueeze(0)  # Shape: (1, 3, H, W)
         
-        # Compute energy (sum of absolute values)
-        energy_original = original_image.abs().sum()
-        energy_rendered = rendering_unsqueezed.abs().sum()
-        
-        # Loss is the absolute difference between energies
-        loss = torch.abs(energy_original - energy_rendered)
+        # difference and loss as absolute sum of that difference
+        diff = original_image - rendering_unsqueezed
+        loss = diff.abs().sum()
         loss.backward()
         num_pixels += rendering.shape[1]*rendering.shape[2]
 
