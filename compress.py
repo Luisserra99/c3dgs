@@ -262,4 +262,16 @@ if __name__ == "__main__":
     pipeline_params = pipeline.extract(args)
     comp_params = comp.extract(args)
 
+    # Apply optional codebook divisor if provided (divides default sizes)
+    try:
+        divisor = int(getattr(args, 'codebook_divisor', 1))
+    except Exception:
+        divisor = 1
+    if divisor and divisor > 1:
+        orig_color = comp_params.color_codebook_size
+        orig_gaussian = comp_params.gaussian_codebook_size
+        comp_params.color_codebook_size = max(1, comp_params.color_codebook_size // divisor)
+        comp_params.gaussian_codebook_size = max(1, comp_params.gaussian_codebook_size // divisor)
+        print(f"Applied codebook divisor {divisor}: color {orig_color}->{comp_params.color_codebook_size}, gaussian {orig_gaussian}->{comp_params.gaussian_codebook_size}")
+
     run_vq(model_params, optim_params, pipeline_params, comp_params)

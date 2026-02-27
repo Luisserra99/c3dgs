@@ -92,6 +92,8 @@ class CompressionParams(ParamGroup):
         self.prune_threshold = 0.
 
         self.output_vq = "./eval_vq"
+        # divisor to scale default codebook sizes (1,2,4,8 etc.)
+        self.codebook_divisor = 1
         self.start_checkpoint = ""
         super().__init__(parser, "Compression Parameters")
 
