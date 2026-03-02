@@ -237,9 +237,14 @@ def run_vq(
     file_size = os.path.getsize(out_file) / 1024**2
     print(f"saved vq finetuned model to {out_file}")
 
-    # eval model
-    print("evaluating...")
-    metrics = render_and_eval(gaussians, scene, model_params, pipeline_params)
+    # eval model using the saved file to guarantee consistency
+    print("evaluating (loading from saved file)...")
+    eval_gaussians = GaussianModel(
+        model_params.sh_degree, quantization=not optim_params.not_quantization_aware
+    )
+    # load the saved NPZ into a fresh model
+    eval_gaussians.load(out_file, override_quantization=True)
+    metrics = render_and_eval(eval_gaussians, scene, model_params, pipeline_params)
     metrics["size"] = file_size
     print(metrics)
     with open(f"{comp_params.output_vq}/results.json","w") as f:
