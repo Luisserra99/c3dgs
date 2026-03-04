@@ -11,6 +11,9 @@ from typing import Dict, Tuple
 
 import torch
 from tqdm import tqdm
+from torchvision.utils import save_image
+from PIL import Image
+import numpy as np
 
 # %%
 from arguments import (
@@ -38,7 +41,7 @@ def unique_output_folder():
 
 
 def calc_importance(
-    gaussians: GaussianModel, scene, pipeline_params
+    gaussians: GaussianModel, scene, pipeline_params, output_dir=None, iteration=None
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     scaling = gaussians.scaling_qa(
         gaussians.scaling_activation(gaussians._scaling.detach())
@@ -58,6 +61,14 @@ def calc_importance(
     gaussians._features_dc.grad = None
     gaussians._features_rest.grad = None
     num_pixels = 0
+    
+    # Create output directory structure for heat maps if specified
+    heat_map_dir = None
+    if output_dir and iteration is not None:
+        heat_map_dir = os.path.join(output_dir, "heat_map", f"iteration_{iteration}")
+        os.makedirs(heat_map_dir, exist_ok=True)
+    
+    camera_idx = 0
     for camera in tqdm(scene.getTrainCameras(), desc="Calculating sensitivity"):
         cov3d_scaled = cov3d * scaling_factor.square()
         rendering = render(
@@ -74,10 +85,23 @@ def calc_importance(
         rendering_unsqueezed = rendering.unsqueeze(0)  # Shape: (1, 3, H, W)
         
         # difference and loss as absolute sum of that difference
-        diff = original_image - rendering_unsqueezed
-        loss = diff.abs().sum()
+        diff = (original_image - rendering_unsqueezed).abs()
+        # square the normalized difference to make loss more aggressive
+        loss = diff.sum()
         loss.backward()
         num_pixels += rendering.shape[1]*rendering.shape[2]
+        
+        # Save the 3 images if output directory is specified
+        if heat_map_dir:
+                # Save original image
+            #save_image(original_image, os.path.join(heat_map_dir, f"camera_{camera_idx}_original.png"))
+                # Save rendered image
+            #save_image(rendering_unsqueezed, os.path.join(heat_map_dir, f"camera_{camera_idx}_rendered.png"))
+                # Save difference as heat map (normalized absolute difference)
+                # Normalize for better visualization
+            diff_normalized = (diff - diff.min()) / (diff.max() - diff.min() + 1e-8)
+            save_image(diff_normalized, os.path.join(heat_map_dir, f"camera_{camera_idx}_difference.png"))    
+        camera_idx += 1
 
     importance = torch.cat(
         [gaussians._features_dc.grad, gaussians._features_rest.grad],
@@ -149,8 +173,10 @@ def run_vq(
     # %%
 
     start_time = time.time()
+    # Create heat_map directory under output_vq before calling calc_importance
+    iteration = scene.loaded_iter
     color_importance, gaussian_sensitivity = calc_importance(
-        gaussians, scene, pipeline_params
+        gaussians, scene, pipeline_params, output_dir=comp_params.output_vq, iteration=iteration
     )
     end_time = time.time()
     timings["sensitivity_calculation"] = end_time-start_time
