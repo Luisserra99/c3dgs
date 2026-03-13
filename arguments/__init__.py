@@ -69,7 +69,7 @@ class PipelineParams(ParamGroup):
 class CompressionParams(ParamGroup):
     def __init__(self, parser):
         self.load_iteration = -1
-        self.finetune_iterations = 5000 # colocar finetune_iterations = 0 para remover o finetune 
+        self.finetune_iterations = 0 # colocar finetune_iterations = 0 para remover o finetune 
 
         self.color_codebook_size = 2**12
         self.color_importance_include = 0.6*1e-6
@@ -93,6 +93,8 @@ class CompressionParams(ParamGroup):
 
         self.output_vq = "./eval_vq"
         self.start_checkpoint = ""
+        # flag for arithmetic‑coding support
+        self.skip_save_npz = True          # if true don't write the final .npz file
         super().__init__(parser, "Compression Parameters")
 
 

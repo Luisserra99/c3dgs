@@ -9,8 +9,24 @@ from os import path
 from shutil import copyfile
 from typing import Dict, Tuple
 
+# arithmetic coding helper (ac_gs.py provides routines to encode integer-valued
+# arrays produced by the gaussian model).  we import the three functions that
+# operate on the in‑memory dictionary, and later we will call them from
+# run_vq when the user requests it.
+from ac_gs import (
+    encode_feature_rest,
+    encode_rgb_features_ac,
+    encode_int8_array_ac,
+    encode_compress_features,
+    encode_compress_gaussians,
+)
+
+
 import torch
 from tqdm import tqdm
+from torchvision.utils import save_image
+from PIL import Image
+import numpy as np
 
 # %%
 from arguments import (
@@ -37,8 +53,44 @@ def unique_output_folder():
     return os.path.join("./output_vq/", unique_str[0:10])
 
 
+# -- arithmetic coding helpers ------------------------------------------------
+
+def write_ac_files(npz_path: str, ac_dir: str) -> None:
+
+    os.makedirs(ac_dir, exist_ok=True)
+    data = np.load(npz_path)
+    save_dict = {k: data[k].copy() for k in data.files}
+
+    # encode each integer array that is present.  previously we only handled
+    # the VQ-specific keys; extend support to the raw indices and features as
+    # requested.
+    if "features_dc" in save_dict:
+        encode_rgb_features_ac(save_dict, "features_dc", os.path.join(ac_dir, "features_dc.bin"))
+    if "features_rest" in save_dict:
+        encode_feature_rest(save_dict, os.path.join(ac_dir, "features_rest.bin"))
+    if "opacity" in save_dict:
+        encode_int8_array_ac(save_dict, "opacity", os.path.join(ac_dir, "opacity.bin"))
+    if "scaling" in save_dict:
+        encode_int8_array_ac(save_dict, "scaling", os.path.join(ac_dir, "scaling.bin"))
+    if "scaling_factor" in save_dict:
+        encode_int8_array_ac(save_dict, "scaling_factor", os.path.join(ac_dir, "scaling_factor.bin"))
+    if "rotation" in save_dict:
+        encode_int8_array_ac(save_dict, "rotation", os.path.join(ac_dir, "rotation.bin"))
+    if "feature_indices" in save_dict:
+        encode_compress_features(save_dict, os.path.join(ac_dir, "feature_indices.bin"))
+    if "gaussian_indices" in save_dict:
+        encode_compress_gaussians(save_dict, os.path.join(ac_dir, "gaussian_indices.bin"))
+
+    # save whatever is left (floating‑point or scale/zp information)
+    np.savez_compressed(os.path.join(ac_dir, "remaining.npz"), **save_dict)
+
+
+# -----------------------------------------------------------------------------
+
+
+
 def calc_importance(
-    gaussians: GaussianModel, scene, pipeline_params
+    gaussians: GaussianModel, scene, pipeline_params, output_dir=None, iteration=None
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     scaling = gaussians.scaling_qa(
         gaussians.scaling_activation(gaussians._scaling.detach())
@@ -58,6 +110,14 @@ def calc_importance(
     gaussians._features_dc.grad = None
     gaussians._features_rest.grad = None
     num_pixels = 0
+    
+    # Create output directory structure for heat maps if specified
+    #heat_map_dir = None
+    #if output_dir and iteration is not None:
+    #    heat_map_dir = os.path.join(output_dir, "heat_map", f"iteration_{iteration}")
+    #    os.makedirs(heat_map_dir, exist_ok=True)
+    
+    camera_idx = 0
     for camera in tqdm(scene.getTrainCameras(), desc="Calculating sensitivity"):
         cov3d_scaled = cov3d * scaling_factor.square()
         rendering = render(
@@ -68,9 +128,29 @@ def calc_importance(
             clamp_color=False,
             cov3d=cov3d_scaled,
         )["render"]
-        loss = rendering.sum()
+        
+        # Compute point‑wise difference between original and rendered images
+        original_image = camera.original_image[0:3, :, :].unsqueeze(0)  # Shape: (1, 3, H, W)
+        rendering_unsqueezed = rendering.unsqueeze(0)  # Shape: (1, 3, H, W)
+        
+        # difference and loss as absolute sum of that difference
+        diff = (original_image - rendering_unsqueezed).abs()
+        # square the normalized difference to make loss more aggressive
+        loss = diff.sum()
         loss.backward()
         num_pixels += rendering.shape[1]*rendering.shape[2]
+        
+        # Save the 3 images if output directory is specified
+        #if heat_map_dir:
+                # Save original image
+            #save_image(original_image, os.path.join(heat_map_dir, f"camera_{camera_idx}_original.png"))
+                # Save rendered image
+            #save_image(rendering_unsqueezed, os.path.join(heat_map_dir, f"camera_{camera_idx}_rendered.png"))
+                # Save difference as heat map (normalized absolute difference)
+                # Normalize for better visualization
+        #    diff_normalized = (diff - diff.min()) / (diff.max() - diff.min() + 1e-8)
+        #    save_image(diff_normalized, os.path.join(heat_map_dir, f"camera_{camera_idx}_difference.png"))    
+        #camera_idx += 1
 
     importance = torch.cat(
         [gaussians._features_dc.grad, gaussians._features_rest.grad],
@@ -142,8 +222,10 @@ def run_vq(
     # %%
 
     start_time = time.time()
+    # Create heat_map directory under output_vq before calling calc_importance
+    iteration = scene.loaded_iter
     color_importance, gaussian_sensitivity = calc_importance(
-        gaussians, scene, pipeline_params
+        gaussians, scene, pipeline_params, output_dir=comp_params.output_vq, iteration=iteration
     )
     end_time = time.time()
     timings["sensitivity_calculation"] = end_time-start_time
@@ -227,24 +309,40 @@ def run_vq(
         comp_params.output_vq,
         f"point_cloud/iteration_{iteration}/point_cloud.npz",
     )
+
+    model_for_ac = None
     start_time = time.time()
-    gaussians.save_npz(out_file, sort_morton=not comp_params.not_sort_morton)
+    if comp_params.skip_save_npz:
+        temp_dir = os.path.join(comp_params.output_vq, "ac_output")
+        os.makedirs(temp_dir, exist_ok=True)
+        model_for_ac = path.join(temp_dir, "uncompressed_model.npz")
+        gaussians.save_npz(model_for_ac, compress=False, sort_morton=not comp_params.not_sort_morton)
+    else:
+        gaussians.save_npz(out_file, sort_morton=not comp_params.not_sort_morton)
+        model_for_ac = out_file
     end_time = time.time()
-    timings["encode"]=end_time-start_time
-    timings["total"]=sum(timings.values())
+    timings["encode"] = end_time - start_time
+
+    timings["total"] = sum(timings.values())
     with open(f"{comp_params.output_vq}/times.json","w") as f:
         json.dump(timings,f)
-    file_size = os.path.getsize(out_file) / 1024**2
-    print(f"saved vq finetuned model to {out_file}")
 
-    # eval model using the saved file to guarantee consistency
-    print("evaluating (loading from saved file)...")
-    eval_gaussians = GaussianModel(
-        model_params.sh_degree, quantization=not optim_params.not_quantization_aware
-    )
-    # load the saved NPZ into a fresh model
-    eval_gaussians.load(out_file, override_quantization=True)
-    metrics = render_and_eval(eval_gaussians, scene, model_params, pipeline_params)
+    # file_size refers to whatever file we actually created (if any)
+    file_size = 0.0
+    if model_for_ac is not None and os.path.exists(model_for_ac):
+        file_size = os.path.getsize(model_for_ac) / 1024**2
+        if not comp_params.skip_save_npz:
+            print(f"saved vq finetuned model to {out_file}")
+
+    # compute the directory that will hold the bitstreams; it is always a
+    # subfolder of ``output_vq``.
+    ac_dir = os.path.join(comp_params.output_vq, "ac_output")
+    if model_for_ac is not None:
+        write_ac_files(model_for_ac, ac_dir)
+
+    # eval model (gaussians is still in memory regardless of saving)
+    print("evaluating...")
+    metrics = render_and_eval(gaussians, scene, model_params, pipeline_params)
     metrics["size"] = file_size
     print(metrics)
     with open(f"{comp_params.output_vq}/results.json","w") as f:
