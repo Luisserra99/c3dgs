@@ -21,21 +21,25 @@ def initialize_feature_rest_freq_models(feature_shape):
 
     return freq_models
 
-def encode_rgb_features_ac(compressed_data, key, fname):
-    print(f"starting to encode {key} with arithmetic coding...")
+def encode_feature_rest(compressed_data, fname):
+    print('starting to encode features_rest with arithmetic coding...')
+    #bitstream = BytesIO()
     bitstream = open(fname, "wb")
+     
 
-    data_sh_ac = compressed_data[key].astype(np.int16) + 128  # shift to unsigned
+    data_sh_ac = compressed_data["features_rest"].astype(np.int32) + 128  # shift to unsigned
     data_sh_ac = data_sh_ac.astype(np.uint16)
-
+    
+    # bitout = BitOutputStream(open("dev.bin", "wb"))
     bitout = BitOutputStream(bitstream)
-
+    
     freq_models = initialize_feature_rest_freq_models(data_sh_ac.shape[1:])
-
+    
+    
     encoder = ArithmeticEncoder(32, bitout)
 
     # Use tqdm to track progress on large arrays.
-    for value in tqdm(data_sh_ac, desc=f"AC encode {key}", unit="gauss"):
+    for value in tqdm(data_sh_ac, desc="AC encode features_rest", unit="gauss"):
         for sh_par in range(value.shape[0]):
             for rgb_par in range(value.shape[1]):
                 idx = sh_par * value.shape[1] + rgb_par
@@ -45,33 +49,9 @@ def encode_rgb_features_ac(compressed_data, key, fname):
     encoder.write(freq_models[0], 256)  # EOF symbol
     encoder.finish()
 
-    compressed_data.pop(key)  # save this separately as a binary file
+    # compressed_data["features_rest"] = bitstream.getvalue()
+    compressed_data.pop("features_rest")  # we will save this separately as a binary file, since it is large and has a simple distribution that compresses well with AC
 
-    bitout.close()
-
-
-def encode_feature_rest(compressed_data, fname):
-    encode_rgb_features_ac(compressed_data, "features_rest", fname)
-
-
-def encode_int8_array_ac(compressed_data, key, fname):
-    print(f"starting to encode {key} with arithmetic coding...")
-    bitstream = open(fname, "wb")
-
-    data_sh_ac = compressed_data[key].astype(np.int16) + 128  # shift to unsigned
-    data_sh_ac = data_sh_ac.astype(np.uint16)
-
-    bitout = BitOutputStream(bitstream)
-    freq_model = FlatFrequencyTable(257)
-    encoder = ArithmeticEncoder(32, bitout)
-
-    for value in tqdm(data_sh_ac.flatten(), desc=f"AC encode {key}", unit="sym"):
-        encoder.write(freq_model, int(value))
-
-    encoder.write(freq_model, 256)  # EOF symbol
-    encoder.finish()
-
-    compressed_data.pop(key)
     bitout.close()
 
 def encode_compress_features(compressed_data, fname):
@@ -88,6 +68,7 @@ def encode_compress_features(compressed_data, fname):
 
     bitout = BitOutputStream(bitstream)
     freq_models = FlatFrequencyTable(eof_symbol + 1)
+
     encoder = ArithmeticEncoder(32, bitout)
 
     # Use tqdm to track progress on large arrays.
@@ -168,14 +149,14 @@ def encoder_gs_params():
     
     # https://www.nayuki.io/page/reference-arithmetic-coding
     
-def decode_rgb_features_ac(fname, feature_shape=(15, 3), num_gaussians=None):
-    """Decode an RGB feature bitstream produced by encode_rgb_features_ac.
+def decode_features_rest_ac(fname, feature_shape=(15, 3), num_gaussians=None):
+    """Decode the features_rest bitstream produced by encode_feature_rest.
 
     Returns a numpy array of shape (N, *feature_shape) with dtype int8.
 
     Args:
-        fname: path to bitstream
-        feature_shape: per-gaussian feature shape (typically (15, 3) or (3, 1))
+        fname: path to features_rest bitstream
+        feature_shape: per-gaussian feature shape (typically (15, 3))
         num_gaussians: optional expected number of gaussians; when provided,
             decoding stops after this many gaussians even if EOF is not reached.
     """
@@ -186,7 +167,7 @@ def decode_rgb_features_ac(fname, feature_shape=(15, 3), num_gaussians=None):
 
     freq_models = initialize_feature_rest_freq_models(feature_shape)
 
-    features = []
+    feature_rest = []
     nb_gaussians = 0
     have_seen_eof = False
 
@@ -199,6 +180,7 @@ def decode_rgb_features_ac(fname, feature_shape=(15, 3), num_gaussians=None):
                 idx = sh_par * feature_shape[1] + rgb_par
                 symbol = decoder.read(freq_models[idx])
 
+                # check EOF
                 if symbol == 256:  # EOF symbol
                     have_seen_eof = True
                     break
@@ -209,60 +191,17 @@ def decode_rgb_features_ac(fname, feature_shape=(15, 3), num_gaussians=None):
                 break
 
         if not have_seen_eof:
-            features.append(sh)
+            feature_rest.append(sh)
             print(f"Decoded gaussian {nb_gaussians}...", end="\r")
 
         if num_gaussians is not None and nb_gaussians >= num_gaussians:
+            # Stop early if we already decoded the expected number of gaussians.
             break
 
     bitin.close()
 
-    features = (np.stack(features, dtype=np.int16) - 128).astype(np.int8)  # shift back to signed
-    return features
-
-
-def decode_features_rest_ac(fname, feature_shape=(15, 3), num_gaussians=None):
-    return decode_rgb_features_ac(fname, feature_shape=feature_shape, num_gaussians=num_gaussians)
-
-
-def decode_int8_array_ac(fname, shape=None, num_values=None):
-    """Decode an int8 bitstream produced by encode_int8_array_ac.
-
-    Args:
-        fname: path to bitstream file.
-        shape: optional target shape for the decoded array.
-        num_values: optional number of values to decode; overrides shape if set.
-
-    Returns:
-        np.ndarray of decoded int8 values.
-    """
-
-    bitstream = open(fname, "rb")
-    bitin = BitInputStream(bitstream)
-    decoder = ArithmeticDecoder(32, bitin)
-    freq_model = FlatFrequencyTable(257)
-
-    values = []
-    target_len = None
-    if num_values is not None:
-        target_len = int(num_values)
-    elif shape is not None:
-        target_len = int(np.prod(shape))
-
-    while True:
-        symbol = decoder.read(freq_model)
-        if symbol == 256:
-            break
-        values.append(symbol)
-        if target_len is not None and len(values) >= target_len:
-            break
-
-    bitin.close()
-
-    out = (np.array(values, dtype=np.int16) - 128).astype(np.int8)
-    if shape is not None:
-        out = out.reshape(shape)
-    return out
+    feature_rest = (np.stack(feature_rest, dtype=np.int16) - 128).astype(np.int8)  # shift back to signed
+    return feature_rest
 
 
 def decode_vq_indices_ac(fname, max_value):

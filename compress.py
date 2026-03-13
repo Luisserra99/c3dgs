@@ -13,13 +13,7 @@ from typing import Dict, Tuple
 # arrays produced by the gaussian model).  we import the three functions that
 # operate on the in‑memory dictionary, and later we will call them from
 # run_vq when the user requests it.
-from ac_gs import (
-    encode_feature_rest,
-    encode_rgb_features_ac,
-    encode_int8_array_ac,
-    encode_compress_features,
-    encode_compress_gaussians,
-)
+from ac_gs import encode_feature_rest, encode_compress_features, encode_compress_gaussians
 
 
 import torch
@@ -64,18 +58,8 @@ def write_ac_files(npz_path: str, ac_dir: str) -> None:
     # encode each integer array that is present.  previously we only handled
     # the VQ-specific keys; extend support to the raw indices and features as
     # requested.
-    if "features_dc" in save_dict:
-        encode_rgb_features_ac(save_dict, "features_dc", os.path.join(ac_dir, "features_dc.bin"))
     if "features_rest" in save_dict:
         encode_feature_rest(save_dict, os.path.join(ac_dir, "features_rest.bin"))
-    if "opacity" in save_dict:
-        encode_int8_array_ac(save_dict, "opacity", os.path.join(ac_dir, "opacity.bin"))
-    if "scaling" in save_dict:
-        encode_int8_array_ac(save_dict, "scaling", os.path.join(ac_dir, "scaling.bin"))
-    if "scaling_factor" in save_dict:
-        encode_int8_array_ac(save_dict, "scaling_factor", os.path.join(ac_dir, "scaling_factor.bin"))
-    if "rotation" in save_dict:
-        encode_int8_array_ac(save_dict, "rotation", os.path.join(ac_dir, "rotation.bin"))
     if "feature_indices" in save_dict:
         encode_compress_features(save_dict, os.path.join(ac_dir, "feature_indices.bin"))
     if "gaussian_indices" in save_dict:
