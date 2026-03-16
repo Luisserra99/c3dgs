@@ -13,7 +13,12 @@ from typing import Dict, Tuple
 # arrays produced by the gaussian model).  we import the three functions that
 # operate on the in‑memory dictionary, and later we will call them from
 # run_vq when the user requests it.
-from ac_gs import encode_feature_rest, encode_compress_features, encode_compress_gaussians
+from ac_gs import (
+    encode_feature_rest,
+    encode_int8_array_ac,
+    encode_compress_features,
+    encode_compress_gaussians,
+)
 
 
 import torch
@@ -59,13 +64,24 @@ def write_ac_files(npz_path: str, ac_dir: str) -> None:
     # the VQ-specific keys; extend support to the raw indices and features as
     # requested.
     if "features_rest" in save_dict:
-        encode_feature_rest(save_dict, os.path.join(ac_dir, "features_rest.bin"))
+        encode_feature_rest(save_dict, "features_rest", os.path.join(ac_dir, "features_rest.bin"))
+    if "features_dc" in save_dict:
+        encode_int8_array_ac(save_dict, "features_dc", os.path.join(ac_dir, "features_dc.bin"))
+    if "opacity" in save_dict:
+        encode_int8_array_ac(save_dict, "opacity", os.path.join(ac_dir, "opacity.bin"))
+    if "scaling" in save_dict:
+        encode_int8_array_ac(save_dict, "scaling", os.path.join(ac_dir, "scaling.bin"))
+    if "scaling_factor" in save_dict:
+        encode_int8_array_ac(save_dict, "scaling_factor", os.path.join(ac_dir, "scaling_factor.bin"))
+    if "rotation" in save_dict:
+        encode_int8_array_ac(save_dict, "rotation", os.path.join(ac_dir, "rotation.bin"))
     if "feature_indices" in save_dict:
         encode_compress_features(save_dict, os.path.join(ac_dir, "feature_indices.bin"))
     if "gaussian_indices" in save_dict:
         encode_compress_gaussians(save_dict, os.path.join(ac_dir, "gaussian_indices.bin"))
 
     # save whatever is left (floating‑point or scale/zp information)
+    
     np.savez_compressed(os.path.join(ac_dir, "remaining.npz"), **save_dict)
 
 
@@ -311,18 +327,33 @@ def run_vq(
     with open(f"{comp_params.output_vq}/times.json","w") as f:
         json.dump(timings,f)
 
-    # file_size refers to whatever file we actually created (if any)
-    file_size = 0.0
-    if model_for_ac is not None and os.path.exists(model_for_ac):
-        file_size = os.path.getsize(model_for_ac) / 1024**2
-        if not comp_params.skip_save_npz:
-            print(f"saved vq finetuned model to {out_file}")
-
     # compute the directory that will hold the bitstreams; it is always a
     # subfolder of ``output_vq``.
     ac_dir = os.path.join(comp_params.output_vq, "ac_output")
     if model_for_ac is not None:
         write_ac_files(model_for_ac, ac_dir)
+
+    file_size = 0.0
+    # Get the directory where the model files are stored
+    model_dir = os.path.dirname(model_for_ac) if model_for_ac else None
+
+    if model_dir and os.path.exists(model_dir):
+        total_bytes = 0
+        
+        # Loop through everything in the directory
+        for filename in os.listdir(model_dir):
+            file_path = os.path.join(model_dir, filename)
+            
+            # Check if it is a file (ignore directories) AND not the uncompressed model
+            if os.path.isfile(file_path) and filename != "uncompressed_model.npz":
+                total_bytes += os.path.getsize(file_path)
+                
+        # Convert the total byte sum to MB
+        file_size = total_bytes / (1024 ** 2)
+        
+        if not comp_params.skip_save_npz:
+            print(f"saved vq finetuned model to {out_file}")
+            print(f"Compressed model size: {file_size:.2f} MB")
 
     # eval model (gaussians is still in memory regardless of saving)
     print("evaluating...")
