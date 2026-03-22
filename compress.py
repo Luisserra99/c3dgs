@@ -8,6 +8,7 @@ from argparse import ArgumentParser, Namespace
 from os import path
 from shutil import copyfile
 from typing import Dict, Tuple
+import matplotlib.pyplot as plt
 
 # arithmetic coding helper (ac_gs.py provides routines to encode integer-valued
 # arrays produced by the gaussian model).  we import the three functions that
@@ -54,34 +55,91 @@ def unique_output_folder():
 
 # -- arithmetic coding helpers ------------------------------------------------
 
-def write_ac_files(npz_path: str, ac_dir: str) -> None:
+# color_codebook_size / gaussian_codebook_size are passed in so we can
+# separate clustered indices (freq > 1, compress well) from direct indices
+# (freq = 1, pointless to AC-encode).
+def write_ac_files(
+    npz_path: str,
+    ac_dir: str,
+    color_codebook_size: int = None,    # added: threshold for feature_indices split
+    gaussian_codebook_size: int = None, # added: threshold for gaussian_indices split
+) -> None:
 
     os.makedirs(ac_dir, exist_ok=True)
     data = np.load(npz_path)
     save_dict = {k: data[k].copy() for k in data.files}
 
+    # Collect shapes / max-values BEFORE each key is popped so the decode
+    # script can reconstruct arrays without guessing.
+    metadata = {}
+
     # encode each integer array that is present.  previously we only handled
     # the VQ-specific keys; extend support to the raw indices and features as
     # requested.
     if "features_rest" in save_dict:
+        arr = save_dict["features_rest"]
+        metadata["features_rest_feature_shape"] = list(arr.shape[1:])  # e.g. [15, 3]
+        metadata["features_rest_num_gaussians"] = int(arr.shape[0])
         encode_feature_rest(save_dict, "features_rest", os.path.join(ac_dir, "features_rest.bin"))
     if "features_dc" in save_dict:
+        metadata["features_dc_shape"] = list(save_dict["features_dc"].shape)
+        # Save eof_symbol so the decoder can build an identical frequency table.
+        # The encoder computes: eof_symbol = max(shifted_array) + 1; we mirror that here.
+        metadata["features_dc_eof_symbol"] = int((save_dict["features_dc"].astype(np.int16) + 128).max()) + 1
         encode_int8_array_ac(save_dict, "features_dc", os.path.join(ac_dir, "features_dc.bin"))
     if "opacity" in save_dict:
+        metadata["opacity_shape"] = list(save_dict["opacity"].shape)
+        metadata["opacity_eof_symbol"] = int((save_dict["opacity"].astype(np.int16) + 128).max()) + 1
         encode_int8_array_ac(save_dict, "opacity", os.path.join(ac_dir, "opacity.bin"))
     if "scaling" in save_dict:
+        metadata["scaling_shape"] = list(save_dict["scaling"].shape)
+        metadata["scaling_eof_symbol"] = int((save_dict["scaling"].astype(np.int16) + 128).max()) + 1
         encode_int8_array_ac(save_dict, "scaling", os.path.join(ac_dir, "scaling.bin"))
     if "scaling_factor" in save_dict:
+        metadata["scaling_factor_shape"] = list(save_dict["scaling_factor"].shape)
+        metadata["scaling_factor_eof_symbol"] = int((save_dict["scaling_factor"].astype(np.int16) + 128).max()) + 1
         encode_int8_array_ac(save_dict, "scaling_factor", os.path.join(ac_dir, "scaling_factor.bin"))
     if "rotation" in save_dict:
+        metadata["rotation_shape"] = list(save_dict["rotation"].shape)
+        metadata["rotation_eof_symbol"] = int((save_dict["rotation"].astype(np.int16) + 128).max()) + 1
         encode_int8_array_ac(save_dict, "rotation", os.path.join(ac_dir, "rotation.bin"))
+    
     if "feature_indices" in save_dict:
+        fi = save_dict["feature_indices"]
+        if color_codebook_size is not None:
+            # Split: values < codebook_size are clustered (high freq); the rest are
+            # direct (each appears exactly once and compresses poorly with AC).
+            is_clustered = fi < color_codebook_size
+            save_dict["feature_indices_is_clustered"] = is_clustered   # mask → remaining.npz
+            # FIX: store actual direct values — Morton sort scrambles their order so they
+            # cannot be reconstructed from the mask alone with a simple arange() assumption.
+            save_dict["feature_indices_direct"] = fi[~is_clustered]    # direct values → remaining.npz
+            save_dict["feature_indices"] = fi[is_clustered]            # only clustered values for AC
+            metadata["feature_indices_codebook_size"] = color_codebook_size  # decoder needs this
+        # guard: empty clustered set has no max
+        metadata["feature_indices_max"] = int(save_dict["feature_indices"].max()) if len(save_dict["feature_indices"]) > 0 else 0
         encode_compress_features(save_dict, os.path.join(ac_dir, "feature_indices.bin"))
+        # encode_compress_features already pops "feature_indices"; mask and direct stay in save_dict
+
     if "gaussian_indices" in save_dict:
+        gi = save_dict["gaussian_indices"]
+        if gaussian_codebook_size is not None:
+            # Same split for gaussian indices
+            is_clustered_g = gi < gaussian_codebook_size
+            save_dict["gaussian_indices_is_clustered"] = is_clustered_g   # mask → remaining.npz
+            # FIX: same reason — Morton sort means direct index values are not sequential
+            save_dict["gaussian_indices_direct"] = gi[~is_clustered_g]    # direct values → remaining.npz
+            save_dict["gaussian_indices"] = gi[is_clustered_g]            # only clustered values for AC
+            metadata["gaussian_indices_codebook_size"] = gaussian_codebook_size  # decoder needs this
+        metadata["gaussian_indices_max"] = int(save_dict["gaussian_indices"].max()) if len(save_dict["gaussian_indices"]) > 0 else 0
         encode_compress_gaussians(save_dict, os.path.join(ac_dir, "gaussian_indices.bin"))
+        # encode_compress_gaussians already pops "gaussian_indices"; mask and direct stay in save_dict
+
+    # Save metadata so the decoder can reconstruct shapes / max-values.
+    with open(os.path.join(ac_dir, "metadata.json"), "w") as _f:
+        json.dump(metadata, _f, indent=2)
 
     # save whatever is left (floating‑point or scale/zp information)
-    
     np.savez_compressed(os.path.join(ac_dir, "remaining.npz"), **save_dict)
 
 
@@ -331,7 +389,14 @@ def run_vq(
     # subfolder of ``output_vq``.
     ac_dir = os.path.join(comp_params.output_vq, "ac_output")
     if model_for_ac is not None:
-        write_ac_files(model_for_ac, ac_dir)
+        write_ac_files(
+            model_for_ac,
+            ac_dir,
+            # Pass codebook sizes so the encoder knows which index values are clustered.
+            # When the corresponding VQ stage was skipped, pass None (fall back to full encoding).
+            color_codebook_size=comp_params.color_codebook_size if not comp_params.not_compress_color else None,
+            gaussian_codebook_size=comp_params.gaussian_codebook_size if not comp_params.not_compress_gaussians else None,
+        )
 
     file_size = 0.0
     # Get the directory where the model files are stored

@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from io import BytesIO
 
@@ -196,31 +197,33 @@ def decode_rgb_features_ac(fname, feature_shape=(15, 3), num_gaussians=None):
     nb_gaussians = 0
     have_seen_eof = False
 
-    while not have_seen_eof:
-        nb_gaussians += 1
-        sh = np.zeros(feature_shape, dtype=np.uint8)
+    # tqdm: use num_gaussians as total when known; otherwise show running count
+    with tqdm(total=num_gaussians, desc=f"AC decode {os.path.basename(fname)}", unit="gauss") as pbar:
+        while not have_seen_eof:
+            nb_gaussians += 1
+            sh = np.zeros(feature_shape, dtype=np.uint8)
 
-        for sh_par in range(feature_shape[0]):
-            for rgb_par in range(feature_shape[1]):
-                idx = sh_par * feature_shape[1] + rgb_par
-                symbol = decoder.read(freq_models[idx])
+            for sh_par in range(feature_shape[0]):
+                for rgb_par in range(feature_shape[1]):
+                    idx = sh_par * feature_shape[1] + rgb_par
+                    symbol = decoder.read(freq_models[idx])
 
-                if symbol == 256:  # EOF symbol
-                    have_seen_eof = True
+                    if symbol == 256:  # EOF symbol
+                        have_seen_eof = True
+                        break
+
+                    sh[sh_par, rgb_par] = symbol
+                    freq_models[idx].increment(symbol)
+
+                if have_seen_eof:
                     break
 
-                sh[sh_par, rgb_par] = symbol
-                freq_models[idx].increment(symbol)  
+            if not have_seen_eof:
+                features.append(sh)
+                pbar.update(1)  # replaced print(...\r) with tqdm update
 
-            if have_seen_eof:
+            if num_gaussians is not None and nb_gaussians >= num_gaussians:
                 break
-
-        if not have_seen_eof:
-            features.append(sh)
-            print(f"Decoded gaussian {nb_gaussians}...", end="\r")
-
-        if num_gaussians is not None and nb_gaussians >= num_gaussians:
-            break
 
     bitin.close()
 
@@ -232,13 +235,17 @@ def decode_features_rest_ac(fname, feature_shape=(15, 3), num_gaussians=None):
     return decode_rgb_features_ac(fname, feature_shape=feature_shape, num_gaussians=num_gaussians)
 
 
-def decode_int8_array_ac(fname, shape=None, num_values=None):
+def decode_int8_array_ac(fname, shape=None, num_values=None, eof_symbol=256):
     """Decode an int8 bitstream produced by encode_int8_array_ac.
 
     Args:
         fname: path to bitstream file.
         shape: optional target shape for the decoded array.
         num_values: optional number of values to decode; overrides shape if set.
+        eof_symbol: must match the value used by the encoder (default 256).
+            The encoder sets eof_symbol = max(shifted_data) + 1, which is only 256
+            when all 256 int8 values are present.  Pass the value from metadata.json
+            to guarantee the frequency-table sizes match exactly.
 
     Returns:
         np.ndarray of decoded int8 values.
@@ -247,7 +254,8 @@ def decode_int8_array_ac(fname, shape=None, num_values=None):
     bitstream = open(fname, "rb")
     bitin = BitInputStream(bitstream)
     decoder = ArithmeticDecoder(32, bitin)
-    freq_model = SimpleFrequencyTable(FlatFrequencyTable(257))  
+    # Table size must match the encoder: FlatFrequencyTable(eof_symbol + 1)
+    freq_model = SimpleFrequencyTable(FlatFrequencyTable(eof_symbol + 1))  # was hardcoded 257
 
     values = []
     target_len = None
@@ -256,14 +264,17 @@ def decode_int8_array_ac(fname, shape=None, num_values=None):
     elif shape is not None:
         target_len = int(np.prod(shape))
 
-    while True:
-        symbol = decoder.read(freq_model)
-        if symbol == 256:
-            break
-        values.append(symbol)
-        freq_model.increment(symbol)  
-        if target_len is not None and len(values) >= target_len:
-            break
+    # tqdm: show total symbols when known, otherwise show running count
+    with tqdm(total=target_len, desc=f"AC decode {os.path.basename(fname)}", unit="sym") as pbar:
+        while True:
+            symbol = decoder.read(freq_model)
+            if symbol == eof_symbol:  # was hardcoded 256; now uses the matched eof_symbol
+                break
+            values.append(symbol)
+            freq_model.increment(symbol)
+            pbar.update(1)  # advance progress bar by one decoded symbol
+            if target_len is not None and len(values) >= target_len:
+                break
 
     bitin.close()
 
@@ -292,12 +303,15 @@ def decode_vq_indices_ac(fname, max_value):
     freq_model = SimpleFrequencyTable(FlatFrequencyTable(eof_symbol + 1)) 
 
     values = []
-    while True:
-        symbol = decoder.read(freq_model)
-        if symbol == eof_symbol:
-            break
-        values.append(symbol)
-        freq_model.increment(symbol)  
+    # total is unknown at decode time (no shape metadata for VQ indices); show running count
+    with tqdm(desc=f"AC decode {os.path.basename(fname)}", unit="sym") as pbar:
+        while True:
+            symbol = decoder.read(freq_model)
+            if symbol == eof_symbol:
+                break
+            values.append(symbol)
+            freq_model.increment(symbol)
+            pbar.update(1)  # added: advance progress bar per decoded symbol
 
     bitin.close()
     return np.array(values, dtype=np.int32)
