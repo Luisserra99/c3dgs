@@ -84,24 +84,24 @@ def calc_importance(
         original_image = camera.original_image[0:3, :, :].unsqueeze(0)  # Shape: (1, 3, H, W)
         rendering_unsqueezed = rendering.unsqueeze(0)  # Shape: (1, 3, H, W)
         
-        # difference and loss as absolute sum of that difference
-        diff = (original_image - rendering_unsqueezed).abs()
+        # difference and loss as absolute sqaured sum of that difference
+        diff = (original_image - rendering_unsqueezed)**(2)
         # square the normalized difference to make loss more aggressive
         loss = diff.sum()
         loss.backward()
         num_pixels += rendering.shape[1]*rendering.shape[2]
         
-        # Save the 3 images if output directory is specified
-        if heat_map_dir:
-                # Save original image
-            #save_image(original_image, os.path.join(heat_map_dir, f"camera_{camera_idx}_original.png"))
-                # Save rendered image
-            #save_image(rendering_unsqueezed, os.path.join(heat_map_dir, f"camera_{camera_idx}_rendered.png"))
-                # Save difference as heat map (normalized absolute difference)
-                # Normalize for better visualization
-            diff_normalized = (diff - diff.min()) / (diff.max() - diff.min() + 1e-8)
-            save_image(diff_normalized, os.path.join(heat_map_dir, f"camera_{camera_idx}_difference.png"))    
-        camera_idx += 1
+            # Save the 3 images if output directory is specified
+            #if heat_map_dir:
+                    # Save original image
+                #save_image(original_image, os.path.join(heat_map_dir, f"camera_{camera_idx}_original.png"))
+                    # Save rendered image
+                #save_image(rendering_unsqueezed, os.path.join(heat_map_dir, f"camera_{camera_idx}_rendered.png"))
+                    # Save difference as heat map (normalized absolute difference)
+                    # Normalize for better visualization
+            #    diff_normalized = (diff - diff.min()) / (diff.max() - diff.min() + 1e-8)
+            #    save_image(diff_normalized, os.path.join(heat_map_dir, f"camera_{camera_idx}_difference.png"))    
+            #camera_idx += 1
 
     importance = torch.cat(
         [gaussians._features_dc.grad, gaussians._features_rest.grad],
