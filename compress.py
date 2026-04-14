@@ -22,6 +22,7 @@ from ac_gs import (
 )
 
 
+import math
 import torch
 from tqdm import tqdm
 from torchvision.utils import save_image
@@ -257,6 +258,39 @@ def render_and_eval(
         }
 
 
+def _quantize_to_int8_np(arr: np.ndarray) -> np.ndarray:
+    max_abs = float(np.abs(arr).max())
+    if max_abs == 0.0:
+        return np.zeros_like(arr, dtype=np.int8)
+    return np.clip(np.round(arr / (max_abs / 127.0)), -128, 127).astype(np.int8)
+
+
+def _compute_entropy_np(arr_int: np.ndarray) -> float:
+    _, counts = np.unique(arr_int.flatten(), return_counts=True)
+    p = counts / float(counts.sum())
+    return float(-np.sum(p * np.log2(p)))
+
+
+def compute_auto_codebook_size(gaussians: GaussianModel, comp_params) -> int:
+    """Compute codebook size from scene entropy using the LPIPS-based formula.
+
+    codebook_size = 2 ** ceil( H * 2^((lpips_b - lpips_loss) / lpips_a) )
+    """
+    arrays = {
+        "features_dc":  gaussians._features_dc.detach().cpu().numpy(),
+        "features_rest": gaussians._features_rest.detach().cpu().numpy(),
+        "opacity":       gaussians._opacity.detach().cpu().numpy(),
+        "scaling":       gaussians._scaling.detach().cpu().numpy(),
+        "rotation":      gaussians._rotation.detach().cpu().numpy(),
+    }
+    H = float(np.mean([_compute_entropy_np(_quantize_to_int8_np(a)) for a in arrays.values()]))
+    print(f"Mean entropy H = {H:.4f} bits")
+    exponent = H * (2.0 ** ((comp_params.lpips_b - comp_params.lpips_loss) / comp_params.lpips_a))
+    cb_size = 2 ** math.ceil(exponent)
+    print(f"Auto codebook size: {cb_size}  (2^{math.ceil(exponent)})")
+    return cb_size
+
+
 def run_vq(
     model_params: ModelParams,
     optim_params: OptimizationParams,
@@ -287,6 +321,12 @@ def run_vq(
     )
     end_time = time.time()
     timings["sensitivity_calculation"] = end_time-start_time
+
+    if comp_params.auto_codebook:
+        cb_size = compute_auto_codebook_size(gaussians, comp_params)
+        comp_params.color_codebook_size = cb_size
+        comp_params.gaussian_codebook_size = cb_size
+
     # %%
     print("vq compression..")
     with torch.no_grad():
