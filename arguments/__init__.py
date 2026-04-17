@@ -89,9 +89,9 @@ class CompressionParams(ParamGroup):
         self.not_compress_gaussians = False
         self.not_sort_morton = False
 
-        self.lpips_a = 0.0521
-        self.lpips_b = 1.0614
-        self.lpips_loss = 1.04
+        self.lpips_a = 0.0631
+        self.lpips_b = 0.9717
+        self.lpips_loss = 1.02
         self.auto_codebook = False
         
         self.prune_threshold = 0.

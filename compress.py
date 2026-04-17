@@ -274,7 +274,7 @@ def _compute_entropy_np(arr_int: np.ndarray) -> float:
 def compute_auto_codebook_size(gaussians: GaussianModel, comp_params) -> int:
     """Compute codebook size from scene entropy using the LPIPS-based formula.
 
-    codebook_size = 2 ** ceil( H * 2^((lpips_b - lpips_loss) / lpips_a) )
+    codebook_size = 2 ** ceil( H * lpips_a/(lpips_loss - lpips_b) )
     """
     arrays = {
         "features_dc":  gaussians._features_dc.detach().cpu().numpy(),
@@ -285,7 +285,7 @@ def compute_auto_codebook_size(gaussians: GaussianModel, comp_params) -> int:
     }
     H = float(np.mean([_compute_entropy_np(_quantize_to_int8_np(a)) for a in arrays.values()]))
     print(f"Mean entropy H = {H:.4f} bits")
-    exponent = H * (2.0 ** ((comp_params.lpips_b - comp_params.lpips_loss) / comp_params.lpips_a))
+    exponent = (H * comp_params.lpips_a) / ( comp_params.lpips_loss-comp_params.lpips_b)
     cb_size = 2 ** math.ceil(exponent)
     print(f"Auto codebook size: {cb_size}  (2^{math.ceil(exponent)})")
     return cb_size
