@@ -32,6 +32,7 @@ import ast
 import json
 import os
 import re
+import time
 from argparse import Namespace
 
 import numpy as np
@@ -43,6 +44,10 @@ from ac_gs import (
     decode_int8_array_ac,
     decode_vq_indices_ac,
 )
+
+# GPU chunk-parallel codec (FCGS-based); used when the archive was encoded
+# with ac_backend == "gpu" (recorded in metadata.json)
+import ac_gpu
 
 # Re-use the evaluation loop from compress.py to keep results comparable
 from compress import render_and_eval
@@ -73,19 +78,28 @@ def decode_ac_dir(ac_dir: str, sh_degree: int = 3) -> dict:
     with open(meta_path) as f:
         meta = json.load(f)
 
+    # Backend the archive was encoded with; old archives predate the field.
+    backend = meta.get("ac_backend", "cpu")
+    print(f"  arithmetic-coding backend: {backend}")
+
     # Start with the arrays that were NOT arithmetic-coded (xyz, quant params …)
     remaining = np.load(os.path.join(ac_dir, "remaining.npz"), allow_pickle=True)
     out = {k: remaining[k] for k in remaining.files}
 
-    # ---- features_rest  (per-position adaptive model, one per SH×RGB slot) ---
+    # ---- features_rest  (one frequency model per SH×RGB slot) ---------------
     rest_bin = os.path.join(ac_dir, "features_rest.bin")
     if os.path.exists(rest_bin):
         feature_shape = tuple(meta["features_rest_feature_shape"])   # e.g. (15, 3)
         num_gaussians = meta["features_rest_num_gaussians"]
         print(f"  decoding features_rest  (feature_shape={feature_shape}, n={num_gaussians}) …")
-        out["features_rest"] = decode_features_rest_ac(
-            rest_bin, feature_shape=feature_shape, num_gaussians=num_gaussians
-        )
+        if backend == "gpu":
+            out["features_rest"] = ac_gpu.decode_feature_rest_gpu(
+                rest_bin, feature_shape=feature_shape, num_gaussians=num_gaussians
+            )
+        else:
+            out["features_rest"] = decode_features_rest_ac(
+                rest_bin, feature_shape=feature_shape, num_gaussians=num_gaussians
+            )
         print(f"    → {out['features_rest'].shape}  {out['features_rest'].dtype}")
 
     # ---- int8 arrays  (single adaptive model each) --------------------------
@@ -97,12 +111,16 @@ def decode_ac_dir(ac_dir: str, sh_degree: int = 3) -> dict:
     for key in ("features_dc", "opacity", "scaling", "scaling_factor", "rotation"):
         bin_path = os.path.join(ac_dir, f"{key}.bin")
         if os.path.exists(bin_path):
-            shape = tuple(meta[f"{key}_shape"])
-            # Read the eof_symbol saved by compress.py; fall back to 256 for old files
-            # that were compressed before this metadata field was added.
-            eof_symbol = meta.get(f"{key}_eof_symbol", 256)  # added: pass to decoder
-            print(f"  decoding {key:<20} shape={list(shape)} eof={eof_symbol} …")
-            out[key] = decode_int8_array_ac(bin_path, shape=shape, eof_symbol=eof_symbol)  # added eof_symbol
+            if backend == "gpu":
+                print(f"  decoding {key:<20} (gpu) …")
+                out[key] = ac_gpu.decode_int_array_gpu(bin_path)
+            else:
+                shape = tuple(meta[f"{key}_shape"])
+                # Read the eof_symbol saved by compress.py; fall back to 256 for old files
+                # that were compressed before this metadata field was added.
+                eof_symbol = meta.get(f"{key}_eof_symbol", 256)  # added: pass to decoder
+                print(f"  decoding {key:<20} shape={list(shape)} eof={eof_symbol} …")
+                out[key] = decode_int8_array_ac(bin_path, shape=shape, eof_symbol=eof_symbol)  # added eof_symbol
             print(f"    → {out[key].shape}  {out[key].dtype}")
 
     # ---- VQ index arrays  (flat adaptive model, only clustered values) ---------
@@ -120,7 +138,10 @@ def decode_ac_dir(ac_dir: str, sh_degree: int = 3) -> dict:
 
         max_value = meta[f"{key}_max"]
         print(f"  decoding {key:<20} max_value={max_value} …")
-        clustered_vals = decode_vq_indices_ac(bin_path, max_value=max_value)
+        if backend == "gpu":
+            clustered_vals = ac_gpu.decode_int_array_gpu(bin_path)
+        else:
+            clustered_vals = decode_vq_indices_ac(bin_path, max_value=max_value)
 
         if cs_meta_key in meta:
             # Retrieve and remove both helper arrays from out — they came from remaining.npz
@@ -258,7 +279,15 @@ def main() -> None:
     # 1. Decode all binary streams
     # ------------------------------------------------------------------
     print("\n=== Decoding AC streams ===")
+    # synchronize around the timer so pending GPU work is attributed correctly
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    decode_start = time.time()
     decoded = decode_ac_dir(ac_dir, sh_degree=sh_degree)
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    time_ac_decode = time.time() - decode_start
+    print(f"  AC decode time: {time_ac_decode:.2f} s")
 
     # ------------------------------------------------------------------
     # 2. Save reconstructed npz in the path layout that Scene expects:
@@ -308,6 +337,7 @@ def main() -> None:
     print(f"  SSIM  = {metrics['SSIM']:.4f}")
     print(f"  LPIPS = {metrics['LPIPS']:.4f}")
 
+    metrics["time_ac_decode"] = time_ac_decode
     result_path = os.path.join(output_dir, "decode_eval_results.json")
     with open(result_path, "w") as f:
         json.dump(metrics, f, indent=4)

@@ -93,7 +93,17 @@ class CompressionParams(ParamGroup):
         self.lpips_b = 0.9717
         self.lpips_loss = 1.02
         self.auto_codebook = False
-        
+
+        # sensitivity measure driving the importance scores:
+        # "energy" (original C3DGS), "abs" (L1 reconstruction error)
+        # or "sq" (squared reconstruction error)
+        self.sensitivity_mode = "abs"
+        # arithmetic-coding backend: "gpu" = chunk-parallel CUDA codec
+        # (submodules/arithmetic), "cpu" = original adaptive Python coder
+        self.ac_backend = "gpu"
+        # RNG seed; run with several seeds to obtain variance estimates
+        self.seed = 0
+
         self.prune_threshold = 0.
 
         self.output_vq = "./eval_vq"

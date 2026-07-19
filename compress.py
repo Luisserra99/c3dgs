@@ -2,13 +2,13 @@
 import gc
 import json
 import os
+import random
 import time
 import uuid
 from argparse import ArgumentParser, Namespace
 from os import path
 from shutil import copyfile
 from typing import Dict, Tuple
-import matplotlib.pyplot as plt
 
 # arithmetic coding helper (ac_gs.py provides routines to encode integer-valued
 # arrays produced by the gaussian model).  we import the three functions that
@@ -20,6 +20,10 @@ from ac_gs import (
     encode_compress_features,
     encode_compress_gaussians,
 )
+
+# GPU chunk-parallel codec (FCGS-based); falls back to ac_gs if the
+# 'arithmetic' CUDA extension is not installed.
+import ac_gpu
 
 
 import math
@@ -59,11 +63,14 @@ def unique_output_folder():
 # color_codebook_size / gaussian_codebook_size are passed in so we can
 # separate clustered indices (freq > 1, compress well) from direct indices
 # (freq = 1, pointless to AC-encode).
+# backend: "gpu" uses the chunk-parallel CUDA codec (ac_gpu.py), "cpu" the
+# original adaptive Python coder (ac_gs.py).
 def write_ac_files(
     npz_path: str,
     ac_dir: str,
     color_codebook_size: int = None,    # added: threshold for feature_indices split
     gaussian_codebook_size: int = None, # added: threshold for gaussian_indices split
+    backend: str = "cpu",
 ) -> None:
 
     os.makedirs(ac_dir, exist_ok=True)
@@ -72,7 +79,18 @@ def write_ac_files(
 
     # Collect shapes / max-values BEFORE each key is popped so the decode
     # script can reconstruct arrays without guessing.
-    metadata = {}
+    metadata = {"ac_backend": backend}
+
+    def encode_int8(key):
+        path = os.path.join(ac_dir, f"{key}.bin")
+        metadata[f"{key}_shape"] = list(save_dict[key].shape)
+        if backend == "gpu":
+            ac_gpu.encode_int_array_gpu(save_dict.pop(key), path)
+        else:
+            # Save eof_symbol so the decoder can build an identical frequency
+            # table: eof_symbol = max(shifted_array) + 1, mirroring the encoder.
+            metadata[f"{key}_eof_symbol"] = int((save_dict[key].astype(np.int16) + 128).max()) + 1
+            encode_int8_array_ac(save_dict, key, path)
 
     # encode each integer array that is present.  previously we only handled
     # the VQ-specific keys; extend support to the raw indices and features as
@@ -81,30 +99,15 @@ def write_ac_files(
         arr = save_dict["features_rest"]
         metadata["features_rest_feature_shape"] = list(arr.shape[1:])  # e.g. [15, 3]
         metadata["features_rest_num_gaussians"] = int(arr.shape[0])
-        encode_feature_rest(save_dict, "features_rest", os.path.join(ac_dir, "features_rest.bin"))
-    if "features_dc" in save_dict:
-        metadata["features_dc_shape"] = list(save_dict["features_dc"].shape)
-        # Save eof_symbol so the decoder can build an identical frequency table.
-        # The encoder computes: eof_symbol = max(shifted_array) + 1; we mirror that here.
-        metadata["features_dc_eof_symbol"] = int((save_dict["features_dc"].astype(np.int16) + 128).max()) + 1
-        encode_int8_array_ac(save_dict, "features_dc", os.path.join(ac_dir, "features_dc.bin"))
-    if "opacity" in save_dict:
-        metadata["opacity_shape"] = list(save_dict["opacity"].shape)
-        metadata["opacity_eof_symbol"] = int((save_dict["opacity"].astype(np.int16) + 128).max()) + 1
-        encode_int8_array_ac(save_dict, "opacity", os.path.join(ac_dir, "opacity.bin"))
-    if "scaling" in save_dict:
-        metadata["scaling_shape"] = list(save_dict["scaling"].shape)
-        metadata["scaling_eof_symbol"] = int((save_dict["scaling"].astype(np.int16) + 128).max()) + 1
-        encode_int8_array_ac(save_dict, "scaling", os.path.join(ac_dir, "scaling.bin"))
-    if "scaling_factor" in save_dict:
-        metadata["scaling_factor_shape"] = list(save_dict["scaling_factor"].shape)
-        metadata["scaling_factor_eof_symbol"] = int((save_dict["scaling_factor"].astype(np.int16) + 128).max()) + 1
-        encode_int8_array_ac(save_dict, "scaling_factor", os.path.join(ac_dir, "scaling_factor.bin"))
-    if "rotation" in save_dict:
-        metadata["rotation_shape"] = list(save_dict["rotation"].shape)
-        metadata["rotation_eof_symbol"] = int((save_dict["rotation"].astype(np.int16) + 128).max()) + 1
-        encode_int8_array_ac(save_dict, "rotation", os.path.join(ac_dir, "rotation.bin"))
-    
+        path = os.path.join(ac_dir, "features_rest.bin")
+        if backend == "gpu":
+            ac_gpu.encode_feature_rest_gpu(save_dict.pop("features_rest"), path)
+        else:
+            encode_feature_rest(save_dict, "features_rest", path)
+    for key in ("features_dc", "opacity", "scaling", "scaling_factor", "rotation"):
+        if key in save_dict:
+            encode_int8(key)
+
     if "feature_indices" in save_dict:
         fi = save_dict["feature_indices"]
         if color_codebook_size is not None:
@@ -119,8 +122,11 @@ def write_ac_files(
             metadata["feature_indices_codebook_size"] = color_codebook_size  # decoder needs this
         # guard: empty clustered set has no max
         metadata["feature_indices_max"] = int(save_dict["feature_indices"].max()) if len(save_dict["feature_indices"]) > 0 else 0
-        encode_compress_features(save_dict, os.path.join(ac_dir, "feature_indices.bin"))
-        # encode_compress_features already pops "feature_indices"; mask and direct stay in save_dict
+        if backend == "gpu":
+            ac_gpu.encode_int_array_gpu(save_dict.pop("feature_indices"), os.path.join(ac_dir, "feature_indices.bin"))
+        else:
+            encode_compress_features(save_dict, os.path.join(ac_dir, "feature_indices.bin"))
+        # the encoder consumes "feature_indices"; mask and direct stay in save_dict
 
     if "gaussian_indices" in save_dict:
         gi = save_dict["gaussian_indices"]
@@ -133,8 +139,11 @@ def write_ac_files(
             save_dict["gaussian_indices"] = gi[is_clustered_g]            # only clustered values for AC
             metadata["gaussian_indices_codebook_size"] = gaussian_codebook_size  # decoder needs this
         metadata["gaussian_indices_max"] = int(save_dict["gaussian_indices"].max()) if len(save_dict["gaussian_indices"]) > 0 else 0
-        encode_compress_gaussians(save_dict, os.path.join(ac_dir, "gaussian_indices.bin"))
-        # encode_compress_gaussians already pops "gaussian_indices"; mask and direct stay in save_dict
+        if backend == "gpu":
+            ac_gpu.encode_int_array_gpu(save_dict.pop("gaussian_indices"), os.path.join(ac_dir, "gaussian_indices.bin"))
+        else:
+            encode_compress_gaussians(save_dict, os.path.join(ac_dir, "gaussian_indices.bin"))
+        # the encoder consumes "gaussian_indices"; mask and direct stay in save_dict
 
     # Save metadata so the decoder can reconstruct shapes / max-values.
     with open(os.path.join(ac_dir, "metadata.json"), "w") as _f:
@@ -149,8 +158,18 @@ def write_ac_files(
 
 
 def calc_importance(
-    gaussians: GaussianModel, scene, pipeline_params, output_dir=None, iteration=None
+    gaussians: GaussianModel,
+    scene,
+    pipeline_params,
+    output_dir=None,
+    iteration=None,
+    sensitivity_mode: str = "abs",
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    # sensitivity_mode selects the scalar whose parameter gradients define the
+    # sensitivity score: "energy" (original C3DGS image energy), "abs"
+    # (absolute reconstruction error) or "sq" (squared reconstruction error).
+    if sensitivity_mode not in ("energy", "abs", "sq"):
+        raise ValueError(f"unknown sensitivity_mode: {sensitivity_mode}")
     scaling = gaussians.scaling_qa(
         gaussians.scaling_activation(gaussians._scaling.detach())
     )
@@ -188,14 +207,13 @@ def calc_importance(
             cov3d=cov3d_scaled,
         )["render"]
         
-        # Compute point‑wise difference between original and rendered images
-        original_image = camera.original_image[0:3, :, :].unsqueeze(0)  # Shape: (1, 3, H, W)
-        rendering_unsqueezed = rendering.unsqueeze(0)  # Shape: (1, 3, H, W)
-        
-        # difference and loss as absolute sum of that difference
-        diff = (original_image - rendering_unsqueezed).abs()
-        # square the normalized difference to make loss more aggressive
-        loss = diff.sum()
+        if sensitivity_mode == "energy":
+            loss = rendering.sum()
+        else:
+            original_image = camera.original_image[0:3, :, :].unsqueeze(0)  # (1, 3, H, W)
+            rendering_unsqueezed = rendering.unsqueeze(0)  # (1, 3, H, W)
+            diff = (original_image - rendering_unsqueezed).abs()
+            loss = diff.square().sum() if sensitivity_mode == "sq" else diff.sum()
         loss.backward()
         num_pixels += rendering.shape[1]*rendering.shape[2]
         
@@ -271,11 +289,9 @@ def _compute_entropy_np(arr_int: np.ndarray) -> float:
     return float(-np.sum(p * np.log2(p)))
 
 
-def compute_auto_codebook_size(gaussians: GaussianModel, comp_params) -> int:
-    """Compute codebook size from scene entropy using the LPIPS-based formula.
-
-    codebook_size = 2 ** ceil( H * lpips_a/(lpips_loss - lpips_b) )
-    """
+def compute_scene_entropy(gaussians: GaussianModel) -> Tuple[Dict[str, float], float]:
+    """Empirical Shannon entropy of the int8-quantized attributes of the
+    uncompressed model. Returns (per-attribute entropies, mean entropy)."""
     arrays = {
         "features_dc":  gaussians._features_dc.detach().cpu().numpy(),
         "features_rest": gaussians._features_rest.detach().cpu().numpy(),
@@ -283,9 +299,20 @@ def compute_auto_codebook_size(gaussians: GaussianModel, comp_params) -> int:
         "scaling":       gaussians._scaling.detach().cpu().numpy(),
         "rotation":      gaussians._rotation.detach().cpu().numpy(),
     }
-    H = float(np.mean([_compute_entropy_np(_quantize_to_int8_np(a)) for a in arrays.values()]))
+    per_attr = {
+        name: _compute_entropy_np(_quantize_to_int8_np(a)) for name, a in arrays.items()
+    }
+    H = float(np.mean(list(per_attr.values())))
     print(f"Mean entropy H = {H:.4f} bits")
-    exponent = (H * comp_params.lpips_a) / ( comp_params.lpips_loss-comp_params.lpips_b)
+    return per_attr, H
+
+
+def codebook_size_from_entropy(H: float, comp_params) -> int:
+    """Codebook size from scene entropy using the LPIPS-based formula:
+
+    codebook_size = 2 ** ceil( H * lpips_a / (lpips_loss - lpips_b) )
+    """
+    exponent = (H * comp_params.lpips_a) / (comp_params.lpips_loss - comp_params.lpips_b)
     cb_size = 2 ** math.ceil(exponent)
     print(f"Auto codebook size: {cb_size}  (2^{math.ceil(exponent)})")
     return cb_size
@@ -297,6 +324,13 @@ def run_vq(
     pipeline_params: PipelineParams,
     comp_params: CompressionParams,
 ):
+    # Seed all RNGs so repeated runs with different --seed values give the
+    # independent samples needed for variance / significance analysis.
+    random.seed(comp_params.seed)
+    np.random.seed(comp_params.seed)
+    torch.manual_seed(comp_params.seed)
+    torch.cuda.manual_seed_all(comp_params.seed)
+
     gaussians = GaussianModel(
         model_params.sh_degree, quantization=not optim_params.not_quantization_aware
     )
@@ -317,13 +351,23 @@ def run_vq(
     # Create heat_map directory under output_vq before calling calc_importance
     iteration = scene.loaded_iter
     color_importance, gaussian_sensitivity = calc_importance(
-        gaussians, scene, pipeline_params, output_dir=comp_params.output_vq, iteration=iteration
+        gaussians,
+        scene,
+        pipeline_params,
+        output_dir=comp_params.output_vq,
+        iteration=iteration,
+        sensitivity_mode=comp_params.sensitivity_mode,
     )
     end_time = time.time()
     timings["sensitivity_calculation"] = end_time-start_time
 
+    # Entropy of the uncompressed model is always measured and stored in
+    # results.json: the entropy-vs-quality analysis needs it for every run,
+    # not only when auto_codebook is enabled.
+    entropy_per_attr, mean_entropy = compute_scene_entropy(gaussians)
+
     if comp_params.auto_codebook:
-        cb_size = compute_auto_codebook_size(gaussians, comp_params)
+        cb_size = codebook_size_from_entropy(mean_entropy, comp_params)
         comp_params.color_codebook_size = cb_size
         comp_params.gaussian_codebook_size = cb_size
 
@@ -421,13 +465,17 @@ def run_vq(
     end_time = time.time()
     timings["encode"] = end_time - start_time
 
-    timings["total"] = sum(timings.values())
-    with open(f"{comp_params.output_vq}/times.json","w") as f:
-        json.dump(timings,f)
-
     # compute the directory that will hold the bitstreams; it is always a
     # subfolder of ``output_vq``.
     ac_dir = os.path.join(comp_params.output_vq, "ac_output")
+    ac_backend = comp_params.ac_backend
+    if ac_backend == "gpu" and not ac_gpu.gpu_available():
+        print("WARNING: 'arithmetic' CUDA extension unavailable "
+              "(pip install ./submodules/arithmetic); falling back to CPU coder")
+        ac_backend = "cpu"
+    # synchronize around the timer so pending GPU work is attributed correctly
+    torch.cuda.synchronize()
+    start_time = time.time()
     if model_for_ac is not None:
         write_ac_files(
             model_for_ac,
@@ -436,7 +484,22 @@ def run_vq(
             # When the corresponding VQ stage was skipped, pass None (fall back to full encoding).
             color_codebook_size=comp_params.color_codebook_size if not comp_params.not_compress_color else None,
             gaussian_codebook_size=comp_params.gaussian_codebook_size if not comp_params.not_compress_gaussians else None,
+            backend=ac_backend,
         )
+    torch.cuda.synchronize()
+    timings["arithmetic_coding"] = time.time() - start_time
+
+    # Three reporting categories: whole compression, AC stage alone, and
+    # everything besides AC.
+    timings["time_total"] = sum(
+        timings[k]
+        for k in ("sensitivity_calculation", "clustering", "finetune", "encode", "arithmetic_coding")
+        if k in timings
+    )
+    timings["time_arithmetic_coding"] = timings["arithmetic_coding"]
+    timings["time_without_ac"] = timings["time_total"] - timings["time_arithmetic_coding"]
+    with open(f"{comp_params.output_vq}/times.json","w") as f:
+        json.dump(timings,f,indent=4)
 
     file_size = 0.0
     # Get the directory where the model files are stored
@@ -464,6 +527,16 @@ def run_vq(
     print("evaluating...")
     metrics = render_and_eval(gaussians, scene, model_params, pipeline_params)
     metrics["size"] = file_size
+    metrics["entropy_mean"] = mean_entropy
+    metrics["entropy_per_attribute"] = entropy_per_attr
+    metrics["seed"] = comp_params.seed
+    metrics["sensitivity_mode"] = comp_params.sensitivity_mode
+    metrics["ac_backend"] = ac_backend
+    metrics["color_codebook_size"] = comp_params.color_codebook_size
+    metrics["gaussian_codebook_size"] = comp_params.gaussian_codebook_size
+    metrics["time_total"] = timings["time_total"]
+    metrics["time_arithmetic_coding"] = timings["time_arithmetic_coding"]
+    metrics["time_without_ac"] = timings["time_without_ac"]
     print(metrics)
     with open(f"{comp_params.output_vq}/results.json","w") as f:
         json.dump({f"ours_{iteration}":metrics},f,indent=4)
