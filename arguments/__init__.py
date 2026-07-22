@@ -98,9 +98,10 @@ class CompressionParams(ParamGroup):
         # "energy" (original C3DGS), "abs" (L1 reconstruction error)
         # or "sq" (squared reconstruction error)
         self.sensitivity_mode = "abs"
-        # arithmetic-coding backend: "gpu" = chunk-parallel CUDA codec
-        # (submodules/arithmetic), "cpu" = original adaptive Python coder
-        self.ac_backend = "gpu"
+        # arithmetic-coding backend: "cpu" = adaptive Python coder (ac_gs.py,
+        # the method reported in the paper), "gpu" = chunk-parallel CUDA codec
+        # (submodules/arithmetic), an optional faster drop-in
+        self.ac_backend = "cpu"
         # RNG seed; run with several seeds to obtain variance estimates
         self.seed = 0
 
