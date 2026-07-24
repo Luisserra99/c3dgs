@@ -7,4 +7,3 @@ eval_vq/
 models/
 **/build/
 **/*.so
-scripts/
