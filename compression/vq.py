@@ -34,21 +34,29 @@ class VectorQuantize(nn.Module):
         amin, amax = x.aminmax()
         self.codebook.data = torch.rand_like(self.codebook) * (amax - amin) + amin
 
-    def update(self, x: torch.Tensor, importance: torch.Tensor) -> torch.Tensor:
+    def update(
+        self,
+        x: torch.Tensor,
+        importance: torch.Tensor,
+        use_softmax: bool = True,
+    ) -> torch.Tensor:
         with torch.no_grad():
             min_dists, idx = weightedDistance(x.detach(), self.codebook.detach())
-            
-            # Apply softmax to importances
-            importance_softmax = torch.nn.functional.softmax(importance, dim=0)
-            
+
+            # Softmax-normalize the importances, or use them as raw weights
+            if use_softmax:
+                weights = torch.nn.functional.softmax(importance, dim=0)
+            else:
+                weights = importance
+
             acc_importance = scatter(
-                importance_softmax, idx, 0, reduce="sum", dim_size=self.codebook.shape[0]
+                weights, idx, 0, reduce="sum", dim_size=self.codebook.shape[0]
             )
 
             ema_inplace(self.entry_importance, acc_importance, self.decay)
 
             codebook = scatter(
-                x * importance_softmax[:, None],
+                x * weights[:, None],
                 idx,
                 0,
                 reduce="sum",
@@ -87,6 +95,7 @@ def vq_features(
     steps: int = 1000,
     decay: float = 0.8,
     scale_normalize: bool = False,
+    use_softmax: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     importance_n = importance/importance.max()
     vq_model = VectorQuantize(
@@ -101,7 +110,9 @@ def vq_features(
     for i in trange(steps):
         batch = torch.randint(low=0, high=features.shape[0], size=[vq_chunk])
         vq_feature = features[batch]
-        error = vq_model.update(vq_feature, importance=importance_n[batch]).mean().item()
+        error = vq_model.update(
+            vq_feature, importance=importance_n[batch], use_softmax=use_softmax
+        ).mean().item()
         errors.append(error)
         if scale_normalize:
             # this computes the trace of the codebook covariance matrices
@@ -155,6 +166,7 @@ def compress_color(
     color_importance: torch.Tensor,
     color_comp: CompressionSettings,
     color_compress_non_dir: bool,
+    use_softmax: bool = True,
 ):
     keep_mask = color_importance > color_comp.importance_include
 
@@ -179,6 +191,7 @@ def compress_color(
             color_comp.codebook_size,
             color_comp.batch_size,
             color_comp.steps,
+            use_softmax=use_softmax,
         )
     else:
         color_codebook = torch.empty(
@@ -199,6 +212,7 @@ def compress_covariance(
     gaussians: GaussianModel,
     gaussian_importance: torch.Tensor,
     gaussian_comp: CompressionSettings,
+    use_softmax: bool = True,
 ):
 
     keep_mask_g = gaussian_importance > gaussian_comp.importance_include
@@ -218,6 +232,7 @@ def compress_covariance(
             gaussian_comp.batch_size,
             gaussian_comp.steps,
             scale_normalize=True,
+            use_softmax=use_softmax,
         )
     else:
         cov_codebook = torch.empty(
@@ -249,6 +264,7 @@ def compress_gaussians(
     gaussian_comp: Optional[CompressionSettings],
     color_compress_non_dir: bool,
     prune_threshold:float=0.,
+    use_softmax: bool = True,
 ):
     with torch.no_grad():
         if prune_threshold >= 0:
@@ -264,11 +280,13 @@ def compress_gaussians(
                 color_importance,
                 color_comp,
                 color_compress_non_dir,
+                use_softmax=use_softmax,
             )
         if gaussian_comp is not None:
             compress_covariance(
                 gaussians,
                 gaussian_importance,
                 gaussian_comp,
+                use_softmax=use_softmax,
             )
 

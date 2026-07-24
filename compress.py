@@ -409,6 +409,7 @@ def run_vq(
             else None,
             comp_params.color_compress_non_dir,
             prune_threshold=comp_params.prune_threshold,
+            use_softmax=not comp_params.no_softmax,
         )
         end_time = time.time()
         timings["clustering"]=end_time-start_time
@@ -452,9 +453,19 @@ def run_vq(
         f"point_cloud/iteration_{iteration}/point_cloud.npz",
     )
 
+    # When arithmetic coding is disabled we reproduce the original C3DGS output
+    # (see default_compre.py): a Morton-sorted, DEFLATE-compressed .npz. Morton
+    # sorting is what makes that .npz compressible, so refuse to drop it here.
+    use_ac = not comp_params.no_ac
+    if not use_ac and comp_params.not_sort_morton:
+        raise ValueError(
+            "--no_ac requires Morton sorting: the DEFLATE baseline is defined "
+            "with sort_morton=True. Drop --not_sort_morton."
+        )
+
     model_for_ac = None
     start_time = time.time()
-    if comp_params.skip_save_npz:
+    if comp_params.skip_save_npz and use_ac:
         temp_dir = os.path.join(comp_params.output_vq, "ac_output")
         os.makedirs(temp_dir, exist_ok=True)
         model_for_ac = path.join(temp_dir, "uncompressed_model.npz")
@@ -468,15 +479,15 @@ def run_vq(
     # compute the directory that will hold the bitstreams; it is always a
     # subfolder of ``output_vq``.
     ac_dir = os.path.join(comp_params.output_vq, "ac_output")
-    ac_backend = comp_params.ac_backend
-    if ac_backend == "gpu" and not ac_gpu.gpu_available():
+    ac_backend = comp_params.ac_backend if use_ac else "none"
+    if use_ac and ac_backend == "gpu" and not ac_gpu.gpu_available():
         print("WARNING: 'arithmetic' CUDA extension unavailable "
               "(pip install ./submodules/arithmetic); falling back to CPU coder")
         ac_backend = "cpu"
     # synchronize around the timer so pending GPU work is attributed correctly
     torch.cuda.synchronize()
     start_time = time.time()
-    if model_for_ac is not None:
+    if use_ac and model_for_ac is not None:
         write_ac_files(
             model_for_ac,
             ac_dir,
@@ -502,30 +513,49 @@ def run_vq(
         json.dump(timings,f,indent=4)
 
     file_size = 0.0
-    # Get the directory where the model files are stored
-    model_dir = os.path.dirname(model_for_ac) if model_for_ac else None
+    if not use_ac:
+        # DEFLATE baseline: the single Morton-sorted .npz *is* the model, so
+        # measure just that file (default_compre.py).
+        file_size = os.path.getsize(out_file) / (1024 ** 2)
+        print(f"saved vq finetuned model to {out_file}")
+        print(f"Compressed model size: {file_size:.2f} MB")
+    else:
+        # AC: the model is the set of bitstreams, so total the directory holding
+        # them, excluding the uncompressed .npz that was only the encoder's input.
+        model_dir = os.path.dirname(model_for_ac) if model_for_ac else None
 
-    if model_dir and os.path.exists(model_dir):
-        total_bytes = 0
-        
-        # Loop through everything in the directory
-        for filename in os.listdir(model_dir):
-            file_path = os.path.join(model_dir, filename)
-            
-            # Check if it is a file (ignore directories) AND not the uncompressed model
-            if os.path.isfile(file_path) and filename != "uncompressed_model.npz":
-                total_bytes += os.path.getsize(file_path)
-                
-        # Convert the total byte sum to MB
-        file_size = total_bytes / (1024 ** 2)
-        
-        if not comp_params.skip_save_npz:
-            print(f"saved vq finetuned model to {out_file}")
-            print(f"Compressed model size: {file_size:.2f} MB")
+        if model_dir and os.path.exists(model_dir):
+            total_bytes = 0
 
-    # eval model (gaussians is still in memory regardless of saving)
+            # Loop through everything in the directory
+            for filename in os.listdir(model_dir):
+                file_path = os.path.join(model_dir, filename)
+
+                # Check if it is a file (ignore directories) AND not the uncompressed model
+                if os.path.isfile(file_path) and filename != "uncompressed_model.npz":
+                    total_bytes += os.path.getsize(file_path)
+
+            # Convert the total byte sum to MB
+            file_size = total_bytes / (1024 ** 2)
+
+            if not comp_params.skip_save_npz:
+                print(f"saved vq finetuned model to {out_file}")
+                print(f"Compressed model size: {file_size:.2f} MB")
+
     print("evaluating...")
-    metrics = render_and_eval(gaussians, scene, model_params, pipeline_params)
+    if not use_ac:
+        # Morton sorting reorders the primitives during serialization, so the
+        # DEFLATE baseline is evaluated on the model that actually round-trips
+        # through the file (default_compre.py).
+        eval_gaussians = GaussianModel(
+            model_params.sh_degree,
+            quantization=not optim_params.not_quantization_aware,
+        )
+        eval_gaussians.load(out_file, override_quantization=True)
+        metrics = render_and_eval(eval_gaussians, scene, model_params, pipeline_params)
+    else:
+        # AC is lossless, so the in-memory model matches what the decoder yields.
+        metrics = render_and_eval(gaussians, scene, model_params, pipeline_params)
     metrics["size"] = file_size
     metrics["entropy_mean"] = mean_entropy
     metrics["entropy_per_attribute"] = entropy_per_attr

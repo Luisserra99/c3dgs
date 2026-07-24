@@ -105,6 +105,13 @@ class CompressionParams(ParamGroup):
         # RNG seed; run with several seeds to obtain variance estimates
         self.seed = 0
 
+        # use the raw importance values as VQ centroid weights ("weighted
+        # distance", the original C3DGS behaviour) instead of softmax-normalised ones
+        self.no_softmax = False
+        # skip arithmetic coding and store the Morton-sorted DEFLATE .npz
+        # instead (the original C3DGS output, see default_compre.py)
+        self.no_ac = False
+
         self.prune_threshold = 0.
 
         self.output_vq = "./eval_vq"
