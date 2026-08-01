@@ -89,8 +89,15 @@ class CompressionParams(ParamGroup):
         self.not_compress_gaussians = False
         self.not_sort_morton = False
 
-        self.lpips_a = 0.0631
-        self.lpips_b = 0.9717
+        # Coefficients of Q_drop = a * (H / log2 K) + b, refitted on the 5-seed
+        # codebook sweep: 13 scenes x K in {4, 8, ..., 4096} x 5 seeds, each
+        # (scene, K) cell reduced to its seed mean and normalized by that
+        # scene's K = 4096 value (143 points, R2 = 0.49, slope p = 3.0e-4 under
+        # scene-clustered standard errors).
+        # See scripts/plot_entropy_figures.py and runs/figures/fit_results.json.
+        # With lpips_loss = 1.02 these select K = 512 for all 13 benchmark scenes.
+        self.lpips_a = 0.0660
+        self.lpips_b = 0.9751
         self.lpips_loss = 1.02
         self.auto_codebook = False
 
