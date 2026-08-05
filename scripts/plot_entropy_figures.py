@@ -313,7 +313,6 @@ def plot_metric(metric, x, y, scenes, ks, fit, box_ks, box_vals,
                             xytext=(4, 4), fontsize=plt.rcParams["font.size"] * 0.5,
                             color=st["color"], zorder=5)
 
-    p_clu = fit.get("A_p_cluster", float("nan"))
     ax.plot(grid, line, color="black", linewidth=3.2, zorder=6,
             label=(f"fit: $A$={fit['A']:.4f}, $B$={fit['B']:.4f}, "
                    f"$R^2$={fit['R2']:.3f}"))
@@ -322,11 +321,9 @@ def plot_metric(metric, x, y, scenes, ks, fit, box_ks, box_vals,
         ax.axhline(tolerance, color="#C00000", linestyle=":", linewidth=2.2,
                    zorder=6,
                    label=f"tolerance $y={tolerance:g}$ (+{100 * (tolerance - 1):g}% {metric})")
-    # the clustered slope test is the honest one here: each scene contributes
-    # one point per K, so the residuals are correlated within a scene
-    ax.plot([], [], linestyle="none",
-            label=f"slope $p$={p_clu:.1e} (clustered), within-scene $R^2$="
-                  f"{fit.get('R2_within', float('nan')):.2f}")
+    # The clustered slope p-value and the within-scene R2 are not drawn in the
+    # legend: both are printed by main() and stored in fit_results.json, which
+    # is where the paper cites them from.
 
     ax.set_xlim(grid[0], grid[-1])
     # The trajectories run along one diagonal, so the legend goes in a corner
@@ -410,7 +407,7 @@ def main():
                              "operating point of every scene")
     parser.add_argument("--tolerance", type=float, default=1.02,
                         help="quality tolerance drawn on both panels")
-    parser.add_argument("--font-size", type=float, default=20.0,
+    parser.add_argument("--font-size", type=float, default=26.0,
                         help="base font size; every other text element scales off it")
     parser.add_argument("--figwidth", type=float, default=14.0,
                         help="figure width in inches (height follows)")
