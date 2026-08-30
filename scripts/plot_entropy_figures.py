@@ -87,6 +87,10 @@ def scene_styles(scenes):
 def set_font_size(size):
     """Scale every text element off one base size."""
     plt.rcParams.update({
+        # Embed glyphs as TrueType (42) rather than matplotlib's default Type 3.
+        # Type 3 fonts are rejected by IEEE/SBrT PDF-compliance checks.
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
         "font.size": size,
         "axes.labelsize": size,
         "axes.titlesize": size,
